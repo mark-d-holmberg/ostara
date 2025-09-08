@@ -6,6 +6,7 @@ defmodule Ostara.Schemas.Product do
   import Ecto.Changeset
 
   @primary_key false
+  @required_attrs [:product_id, :product_name, :price]
 
   embedded_schema do
     field :product_id, :integer
@@ -22,7 +23,7 @@ defmodule Ostara.Schemas.Product do
     |> cast(params, [:product_id, :product_name, :price, :tags])
     |> cast_embed(:dimensions, required: true)
     |> cast_embed(:reviews)
-    |> validate_required([:product_id, :product_name, :price])
+    |> validate_required(@required_attrs)
     |> validate_number(:price, greater_than: 0)
     |> validate_length(:tags, min: 1)
   end

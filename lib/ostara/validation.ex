@@ -1,90 +1,175 @@
 defmodule Ostara.Validation do
   @moduledoc """
-  Functions for converting `Ecto.Changeset` validators into JSON Schema
-  type-specific validations.
+  Converts `Ecto.Changeset` validators into JSON Schema validations
+  by inspecting changesets at runtime (no AST parsing).
+
+  Guarantees (aligned with existing tests/behavior):
+    * snake_case field names
+    * inline embedded schemas
+    * open objects (no additionalProperties here)
+    * number/length/format validations mapped
+    * required fields from `changeset.required` (incl. required embeds)
   """
 
-  require Logger
   alias Ostara.JSONSchema
-
-  @type ast() :: {marker :: atom(), metadata :: keyword(), args :: list()}
+  require Logger
 
   @doc """
-  Annotates the `"properties"` in the given `map` based on the
-  `changeset/1` function defined in the `module`.
+  Annotates the `"properties"` in `map` based on the runtime `changeset/2`
+  of `module`.
+
+  Notes:
+    * We call the schema's `changeset/2` defensively via `build_changeset/1`
+      to tolerate different arities/usages and schemas that call `apply_action!/2`.
+    * Populates root `"required"` from `cs.required`.
+    * Maps:
+        - `:number`  -> minimum/maximum, exclusiveMinimum/exclusiveMaximum
+        - `:length`  -> minLength/maxLength for strings; minItems/maxItems for arrays
+        - `:format`  -> pattern (regex)
   """
   @spec put_validations(map(), atom()) :: map()
-  def put_validations(%{"properties" => _} = map, module) do
-    [pipeline | rest] = get_changeset_ast(module)
+  def put_validations(%{"properties" => _} = map, module) when is_atom(module) do
+    cs = build_changeset(module)
 
-    pipeline
-    |> Macro.unpipe()
-    |> Kernel.++(rest)
-    |> Enum.map(fn x ->
-      case x do
-        {x, _} -> x
-        _ -> x
+    # 1) Required fields (validate_required & cast_embed(..., required: true))
+    required = cs.required |> Enum.map(&JSONSchema.field_name/1)
+    map = update_required(map, required)
+
+    # 2) Known validations
+    Enum.reduce(cs.validations, map, fn {field, {validator, opts}}, acc ->
+      json_field = JSONSchema.field_name(field)
+
+      case validator do
+        :number ->
+          validations =
+            Enum.reduce(opts, %{}, fn
+              {:less_than, v}, acc -> Map.put(acc, "exclusiveMaximum", v)
+              {:greater_than, v}, acc -> Map.put(acc, "exclusiveMinimum", v)
+              {:less_than_or_equal_to, v}, acc -> Map.put(acc, "maximum", v)
+              {:greater_than_or_equal_to, v}, acc -> Map.put(acc, "minimum", v)
+              _, acc -> acc
+            end)
+
+          update_property(acc, json_field, validations)
+
+        :length ->
+          ecto_type = module.__schema__(:type, field)
+
+          {min_key, max_key} =
+            case ecto_type do
+              {:array, _} -> {"minItems", "maxItems"}
+              _ -> {"minLength", "maxLength"}
+            end
+
+          validations =
+            Enum.reduce(opts, %{}, fn
+              {:min, v}, acc -> Map.put(acc, min_key, v)
+              {:max, v}, acc -> Map.put(acc, max_key, v)
+              {:is, v}, acc -> acc |> Map.put(min_key, v) |> Map.put(max_key, v)
+              _, acc -> acc
+            end)
+
+          update_property(acc, json_field, validations)
+
+        :format ->
+          # Ecto stores as {regex, opts}; be tolerant of older shapes too.
+          {regex, _} =
+            case opts do
+              {r, o} -> {r, o}
+              r -> {r, []}
+            end
+
+          update_property(acc, json_field, %{"pattern" => Regex.source(regex)})
+
+        _other ->
+          acc
       end
     end)
-    |> Enum.reduce(map, &apply_validation/2)
   end
 
-  @spec apply_validation(ast(), map()) :: map()
-  defp apply_validation({:validate_required, _, [list]}, map) do
-    required = Enum.map(list, &JSONSchema.field_name/1)
-    update_required(map, required)
-  end
+  # If "properties" key is missing, return map unchanged
+  def put_validations(map, _module), do: map
 
-  defp apply_validation({:cast_embed, _, [field, list]}, map) do
-    case Keyword.get(list, :required) do
-      true ->
-        update_required(map, [JSONSchema.field_name(field)])
+  # ----------------------------------------------------------------------------
+  # Internal helpers
+  # ----------------------------------------------------------------------------
 
+  # Build a changeset defensively:
+  # 1) try (data, %{})
+  # 2) try (%{}, data)
+  # 3) try (data, dummy_params)
+  # 4) try (dummy_params, data)
+  defp build_changeset(module) do
+    data = struct(module)
+    empty = %{}
+
+    try do
+      module.changeset(data, empty)
+    rescue
       _ ->
-        map
+        try do
+          module.changeset(empty, data)
+        rescue
+          _ ->
+            params = dummy_params(module)
+
+            try do
+              module.changeset(data, params)
+            rescue
+              _ ->
+                module.changeset(params, data)
+            end
+        end
     end
   end
 
-  defp apply_validation({:validate_number, _, [field, list]}, map) do
-    field = JSONSchema.field_name(field)
-
-    validations =
-      Enum.reduce(list, %{}, fn {k, v}, acc ->
-        case k do
-          :less_than -> Map.put(acc, "exclusiveMaximum", v)
-          :greater_than -> Map.put(acc, "exclusiveMinimum", v)
-          :less_than_or_equal_to -> Map.put(acc, "maximum", v)
-          :greater_than_or_equal_to -> Map.put(acc, "minimum", v)
-          _ -> acc
-        end
-      end)
-
-    update_property(map, field, validations)
+  defp dummy_params(module) do
+    module.__schema__(:fields)
+    |> Enum.reduce(%{}, fn field, acc ->
+      type = module.__schema__(:type, field)
+      Map.put(acc, to_string(field), dummy_value(type))
+    end)
   end
 
-  defp apply_validation({:validate_length, _, [field, list]}, map) do
-    field = JSONSchema.field_name(field)
+  # Choose dummy values that won't trip validate_required (no blank strings)
+  defp dummy_value({:array, _inner}), do: []
+  defp dummy_value({:parameterized, {Ecto.Embedded, _}}), do: %{}
+  defp dummy_value(:map), do: %{}
+  defp dummy_value(:integer), do: 0
+  defp dummy_value(:float), do: 0.0
+  defp dummy_value(:boolean), do: false
+  defp dummy_value(:binary_id), do: "00000000-0000-0000-0000-000000000000"
+  # non-empty placeholder
+  defp dummy_value(:binary), do: "AA=="
+  defp dummy_value(:date), do: "1970-01-01"
+  defp dummy_value(:time), do: "00:00:00"
+  defp dummy_value(:naive_datetime), do: "1970-01-01T00:00:00"
+  defp dummy_value(:utc_datetime), do: "1970-01-01T00:00:00Z"
+  defp dummy_value(:utc_datetime_usec), do: "1970-01-01T00:00:00Z"
 
-    validations =
-      Enum.reduce(list, %{}, fn {k, v}, acc ->
-        case k do
-          :min -> Map.put(acc, "minItems", v)
-          :max -> Map.put(acc, "maxItems", v)
-          _ -> acc
-        end
-      end)
+  # Ecto.Enum: pick the first valid value if available
+  defp dummy_value({:parameterized, {Ecto.Enum, params}}) do
+    val =
+      cond do
+        is_map(params) and Map.has_key?(params, :mappings) ->
+          params.mappings |> Map.keys() |> List.first()
 
-    update_property(map, field, validations)
+        is_map(params) and Map.has_key?(params, :values) and is_list(params.values) ->
+          List.first(params.values)
+
+        true ->
+          "value"
+      end
+
+    to_string(val || "value")
   end
 
-  defp apply_validation({name, _, _}, map) when name in [:data, :cast, :cast_embed, :schema] do
-    map
-  end
+  # Back-compat tuple form
+  defp dummy_value({:parameterized, Ecto.Enum, params}),
+    do: dummy_value({:parameterized, {Ecto.Enum, params}})
 
-  defp apply_validation(validation, map) do
-    Logger.warning("No validation: " <> inspect(validation))
-    map
-  end
+  # Default to non-blank string
+  defp dummy_value(_), do: "x"
 
   @spec update_required(map(), [String.t()]) :: map()
   defp update_required(map, list) do
@@ -92,11 +177,13 @@ defmodule Ostara.Validation do
       map
       |> Map.get("required", [])
       |> Kernel.++(list)
+      |> Enum.uniq()
+      |> Enum.sort()
 
     Map.put(map, "required", required)
   end
 
-  @spec update_property(map(), String.t(), term()) :: map()
+  @spec update_property(map(), String.t(), map()) :: map()
   defp update_property(map, field, update) do
     updated =
       map
@@ -105,51 +192,5 @@ defmodule Ostara.Validation do
       |> Map.merge(update)
 
     put_in(map, ["properties", field], updated)
-  end
-
-  @spec get_changeset_ast(atom) :: [ast()]
-  defp get_changeset_ast(module) do
-    {_, _, children} =
-      module
-      |> quote_module()
-      |> get_inner_ast()
-      |> get_changeset()
-
-    children
-  end
-
-  @spec quote_module(atom()) :: Macro.t()
-  defp quote_module(module) do
-    module
-    |> get_module_source()
-    |> File.read!()
-    |> Code.string_to_quoted!()
-  end
-
-  @spec get_module_source(atom()) :: String.t()
-  defp get_module_source(module) do
-    :compile
-    |> module.__info__()
-    |> Keyword.fetch!(:source)
-  end
-
-  @spec get_inner_ast(ast()) :: ast()
-  defp get_inner_ast({:defmodule, _, [_, [{:do, {_, _, module_ast}}]]}) do
-    module_ast
-  end
-
-  @spec get_changeset_ast(ast()) :: ast()
-  defp get_changeset(ast) do
-    node =
-      Enum.find(ast, fn node ->
-        case node do
-          {:def, _, [{:changeset, _, _} | _]} -> true
-          _ -> false
-        end
-      end)
-
-    {:def, _, [{:changeset, _, _} | [inner]]} = node
-
-    Keyword.fetch!(inner, :do)
   end
 end

@@ -35,8 +35,24 @@ defmodule Ostara.Properties do
   end
 
   @spec propertize_type({:parameterized, {struct(), map()}}) :: map()
-  defp propertize_type({:parameterized, {Ecto.Enum, _params}}) do
-    %{"type" => "string"}
+  # Ecto.Enum with values → "enum"
+  defp propertize_type({:parameterized, {Ecto.Enum, params}}) do
+    values =
+      cond do
+        is_map(params) and Map.has_key?(params, :mappings) ->
+          Map.keys(params.mappings)
+
+        is_map(params) and Map.has_key?(params, :values) and is_list(params.values) ->
+          params.values
+
+        true ->
+          nil
+      end
+
+    case values do
+      nil -> %{"type" => "string"}
+      list when is_list(list) -> %{"type" => "string", "enum" => Enum.map(list, &to_string/1)}
+    end
   end
 
   defp propertize_type({:parameterized, {Ecto.Embedded, %{related: source, cardinality: :one}}}) do
@@ -55,8 +71,9 @@ defmodule Ostara.Properties do
     %{"type" => "string"}
   end
 
-  defp propertize_type({:parameterized, Ecto.Enum, _params}) do
-    %{"type" => "string"}
+  # Back-compat for the alternate tuple form some Ecto versions emit
+  defp propertize_type({:parameterized, Ecto.Enum, params}) do
+    propertize_type({:parameterized, {Ecto.Enum, params}})
   end
 
   defp propertize_type(:float) do

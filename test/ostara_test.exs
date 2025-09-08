@@ -2,10 +2,12 @@ defmodule OstaraTest do
   use ExUnit.Case
   alias Ostara.Schemas.Product
 
+  doctest Ostara
+
   # Test schema based on https://json-schema.org/learn/getting-started-step-by-step.html
   describe "transmute/1" do
     test "produces the correct schema" do
-      assert Ostara.transmute(Product) == %{
+      assert %{
                "$schema" => "https://json-schema.org/draft/2020-12/schema",
                "$id" => "product",
                "title" => "Product",
@@ -43,7 +45,7 @@ defmodule OstaraTest do
                        "type" => "number"
                      }
                    },
-                   "required" => ["length", "width", "height"]
+                   "required" => Enum.sort(["length", "width", "height"])
                  },
                  "reviews" => %{
                    "type" => "array",
@@ -64,8 +66,8 @@ defmodule OstaraTest do
                    }
                  }
                },
-               "required" => ["dimensions", "product_id", "product_name", "price"]
-             }
+               "required" => Enum.sort(["dimensions", "product_id", "product_name", "price"])
+             } == Ostara.transmute(Product)
     end
 
     # test "generates JSON data" do
