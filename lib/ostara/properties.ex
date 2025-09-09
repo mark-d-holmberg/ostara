@@ -19,11 +19,22 @@ defmodule Ostara.Properties do
 
   @spec get_properties(atom()) :: map()
   defp get_properties(source) do
+    data = struct(source)
+
     source
     |> get_fields()
     |> Map.new(fn field ->
       name = JSONSchema.field_name(field)
       type = propertize_type(source.__schema__(:type, field))
+
+      type =
+        case {field, Map.get(data, field)} do
+          {:type, v} when is_binary(v) and v != "" ->
+            Map.put(type, "const", v)
+
+          _ ->
+            type
+        end
 
       {name, type}
     end)
@@ -76,9 +87,25 @@ defmodule Ostara.Properties do
     propertize_type({:parameterized, {Ecto.Enum, params}})
   end
 
+  defp propertize_type(:naive_datetime), do: %{"type" => "string", "format" => "date-time"}
+  defp propertize_type(:utc_datetime), do: %{"type" => "string", "format" => "date-time"}
+  defp propertize_type(:utc_datetime_usec), do: %{"type" => "string", "format" => "date-time"}
+  defp propertize_type(:date), do: %{"type" => "string", "format" => "date"}
+  defp propertize_type(:time), do: %{"type" => "string", "format" => "time"}
+
+  # Allow any value
+  defp propertize_type(:any), do: %{}
+
+  # Arrays of any
+  defp propertize_type({:array, :any}) do
+    %{"type" => "array", "items" => %{}}
+  end
+
   defp propertize_type(:float) do
     %{"type" => "number"}
   end
+
+  defp propertize_type(:map), do: %{"type" => "object"}
 
   defp propertize_type({:array, type}) do
     type =
