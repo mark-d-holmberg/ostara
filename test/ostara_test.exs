@@ -1,6 +1,6 @@
 defmodule OstaraTest do
   use ExUnit.Case
-  alias Ostara.Schemas.Product
+  alias Ostara.Schemas.{Product, Sheet}
 
   doctest Ostara
 
@@ -73,5 +73,49 @@ defmodule OstaraTest do
     # test "generates JSON data" do
     #   assert Ostara.transmute(Product, format: :json) =~ ~s("title": "Product")
     # end
+  end
+
+  describe "transmute/1 with Veilgen resources" do
+    test "it works with a sheet" do
+      assert %{
+               "$id" => "sheet",
+               "$schema" => "https://json-schema.org/draft/2020-12/schema",
+               "description" => "A Character Sheet that we can save.",
+               "properties" => %{
+                 "alignment" => %{"type" => "string"},
+                 "background_key" => %{"type" => "string"},
+                 "character_class" => %{
+                   "description" =>
+                     "Embedded schema for storing a character's class information.",
+                   "properties" => %{
+                     "ability_proficiency" => %{"type" => "string"},
+                     "class_key" => %{"type" => "string"},
+                     "level" => %{"type" => "integer"},
+                     "proficiency_bonus" => %{"type" => "string"},
+                     "save_proficiency" => %{"type" => "string"},
+                     "subclass_key" => %{"type" => "string"}
+                   },
+                   "required" => ["class_key", "level"],
+                   "title" => "CharacterClass",
+                   "type" => "object"
+                 },
+                 "class_key" => %{"type" => "string"},
+                 "created_at" => %{"format" => "date-time", "type" => "string"},
+                 "gender" => %{"type" => "string"},
+                 "name" => %{"maxLength" => 20, "minLength" => 1, "type" => "string"},
+                 "player_name" => %{"maxLength" => 40, "minLength" => 1, "type" => "string"},
+                 "race_key" => %{"type" => "string"},
+                 "revision" => %{"type" => "integer"},
+                 "sheet_id" => %{"type" => "string"},
+                 "tags" => %{"items" => %{"type" => "string"}, "type" => "array"},
+                 "transforms" => %{"items" => %{}, "type" => "array"},
+                 "type" => %{"const" => "sheet", "type" => "string"},
+                 "updated_at" => %{"format" => "date-time", "type" => "string"}
+               },
+               "required" => ["sheet_id"],
+               "title" => "Sheet",
+               "type" => "object"
+             } = Ostara.transmute(Sheet)
+    end
   end
 end

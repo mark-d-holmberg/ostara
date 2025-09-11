@@ -99,39 +99,62 @@ defmodule Ostara.Validation do
   # 2) try (%{}, data)
   # 3) try (data, dummy_params)
   # 4) try (dummy_params, data)
+
+  # Try calling changeset with params-first first, then with embed seeds, then data-first.
   defp build_changeset(module) do
     data = struct(module)
     empty = %{}
+    seeds = embed_seed_params(module) |> Map.merge(dummy_params(module))
 
+    # 1) params-first, empty
     try do
-      module.changeset(data, empty)
+      module.changeset(empty, data)
     rescue
       _ ->
+        # 2) params-first, with seeds (embeds + dummy scalars)
         try do
-          module.changeset(empty, data)
+          module.changeset(seeds, data)
         rescue
           _ ->
-            params = dummy_params(module)
-
+            # 3) data-first, empty
             try do
-              module.changeset(data, params)
+              module.changeset(data, empty)
             rescue
               _ ->
-                module.changeset(params, data)
+                # 4) data-first, with seeds
+                module.changeset(data, seeds)
             end
         end
     end
   end
 
-  defp dummy_params(module) do
-    module.__schema__(:fields)
-    |> Enum.reduce(%{}, fn field, acc ->
-      type = module.__schema__(:type, field)
-      Map.put(acc, to_string(field), dummy_value(type))
+  # Build seed params for embeds so cast_embed sees a map (or list) – never a struct.
+  defp embed_seed_params(module) do
+    Enum.reduce(module.__schema__(:embeds), %{}, fn field, acc ->
+      %{cardinality: cardinality} = module.__schema__(:embed, field)
+
+      value =
+        case cardinality do
+          # embeds_one expects a map
+          :one -> %{}
+          # embeds_many expects a list of maps
+          :many -> []
+        end
+
+      Map.put(acc, Atom.to_string(field), value)
     end)
   end
 
-  # Choose dummy values that won't trip validate_required (no blank strings)
+  # Seed scalar fields so validate_required won’t raise, and cast/validate have something to chew on.
+  defp dummy_params(module) do
+    Enum.reduce(module.__schema__(:fields), %{}, fn field, acc ->
+      type = module.__schema__(:type, field)
+      Map.put(acc, Atom.to_string(field), dummy_value(type))
+    end)
+  end
+
+  # ------------------ dummy values (unchanged except final default is non-blank) ------------------
+
   defp dummy_value({:array, _inner}), do: []
   defp dummy_value({:parameterized, {Ecto.Embedded, _}}), do: %{}
   defp dummy_value(:map), do: %{}
@@ -147,7 +170,7 @@ defmodule Ostara.Validation do
   defp dummy_value(:utc_datetime), do: "1970-01-01T00:00:00Z"
   defp dummy_value(:utc_datetime_usec), do: "1970-01-01T00:00:00Z"
 
-  # Ecto.Enum: pick the first valid value if available
+  # Ecto.Enum first valid value if present
   defp dummy_value({:parameterized, {Ecto.Enum, params}}) do
     val =
       cond do
@@ -164,11 +187,10 @@ defmodule Ostara.Validation do
     to_string(val || "value")
   end
 
-  # Back-compat tuple form
   defp dummy_value({:parameterized, Ecto.Enum, params}),
     do: dummy_value({:parameterized, {Ecto.Enum, params}})
 
-  # Default to non-blank string
+  # Default to non-blank string so validate_required passes
   defp dummy_value(_), do: "x"
 
   @spec update_required(map(), [String.t()]) :: map()
