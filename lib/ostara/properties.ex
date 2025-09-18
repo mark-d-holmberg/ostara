@@ -51,7 +51,13 @@ defmodule Ostara.Properties do
     values =
       cond do
         is_map(params) and Map.has_key?(params, :mappings) ->
-          Map.keys(params.mappings)
+          if Keyword.keyword?(params.mappings) do
+            params.mappings
+            |> Map.new()
+            |> Map.keys()
+          else
+            Map.keys(params.mappings)
+          end
 
         is_map(params) and Map.has_key?(params, :values) and is_list(params.values) ->
           params.values

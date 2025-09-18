@@ -8,7 +8,7 @@ defmodule Ostara.MixProject do
     [
       app: :ostara,
       version: @version,
-      elixir: "~> 1.14",
+      elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       description: " Converts Ecto schemas into JSON Schemas.",
@@ -16,7 +16,8 @@ defmodule Ostara.MixProject do
       deps: deps(),
       docs: docs(),
       name: "Ostara",
-      source_url: @source_url
+      source_url: @source_url,
+      compilers: [:leex] ++ Mix.compilers()
     ]
   end
 

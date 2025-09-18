@@ -175,7 +175,11 @@ defmodule Ostara.Validation do
     val =
       cond do
         is_map(params) and Map.has_key?(params, :mappings) ->
-          params.mappings |> Map.keys() |> List.first()
+          if Keyword.keyword?(params.mappings) do
+            params.mappings |> Map.new() |> Map.keys() |> List.first()
+          else
+            params.mappings |> Map.keys() |> List.first()
+          end
 
         is_map(params) and Map.has_key?(params, :values) and is_list(params.values) ->
           List.first(params.values)
