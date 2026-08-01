@@ -75,6 +75,33 @@ defmodule OstaraTest do
     # end
   end
 
+  describe "transmute/2 with refs: true" do
+    test "replaces embeds_one with a $ref pointer" do
+      schema = Ostara.transmute(Product, refs: true)
+      assert %{"$ref" => "#/$defs/Dimensions"} == get_in(schema, ["properties", "dimensions"])
+    end
+
+    test "replaces embeds_many items with a $ref pointer" do
+      schema = Ostara.transmute(Product, refs: true)
+
+      assert %{"type" => "array", "items" => %{"$ref" => "#/$defs/Review"}} ==
+               get_in(schema, ["properties", "reviews"])
+    end
+
+    test "collects embedded schemas into $defs" do
+      schema = Ostara.transmute(Product, refs: true)
+      defs = Map.fetch!(schema, "$defs")
+
+      assert %{"title" => "Dimensions", "type" => "object"} = defs["Dimensions"]
+      assert %{"title" => "Review", "type" => "object"} = defs["Review"]
+    end
+
+    test "does not add $defs when there are no embedded schemas" do
+      schema = Ostara.transmute(Ostara.Schemas.Dimensions, refs: true)
+      refute Map.has_key?(schema, "$defs")
+    end
+  end
+
   describe "transmute/1 with Veilgen resources" do
     test "it works with a sheet" do
       assert %{

@@ -46,7 +46,7 @@ defmodule Ostara do
       }
   """
 
-  alias __MODULE__.JSONSchema
+  alias __MODULE__.{JSONSchema, Refs}
 
   @doc """
   Produces a JSON Schema based on the given `source` module.
@@ -54,12 +54,18 @@ defmodule Ostara do
   ## Options
 
     * `:format` - If `:json`, returns the data as pretty-printed JSON
+    * `:refs` - If `true`, extracts embedded schemas into a top-level `"$defs"`
+      block and replaces inline occurrences with `{"$ref" => "#/$defs/<Title>"}`
+      pointers instead of inlining them
 
   """
-  @spec transmute(atom(), [{:format, atom()}]) :: map() | String.t()
+  @spec transmute(atom(), [{:format, atom()} | {:refs, boolean()}]) :: map() | String.t()
   def transmute(source, opts \\ []) when is_atom(source) do
     format = Keyword.get(opts, :format)
+    refs = Keyword.get(opts, :refs, false)
+
     schema = JSONSchema.generate(source, root: true)
+    schema = if refs, do: Refs.extract(schema), else: schema
 
     if format == :json do
       Jason.encode!(schema, pretty: true)
