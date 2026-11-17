@@ -46,7 +46,7 @@ defmodule Ostara do
       }
   """
 
-  alias __MODULE__.{JSONSchema, Refs}
+  alias __MODULE__.{Filter, JSONSchema, Refs}
 
   @doc """
   Produces a JSON Schema based on the given `source` module.
@@ -57,14 +57,23 @@ defmodule Ostara do
     * `:refs` - If `true`, extracts embedded schemas into a top-level `"$defs"`
       block and replaces inline occurrences with `{"$ref" => "#/$defs/<Title>"}`
       pointers instead of inlining them
+    * `:only` - A whitelist of top-level field names (atoms or strings). Every
+      other property is removed from `"properties"` and `"required"`. Because
+      filtering happens before `:refs` extraction, embedded schemas that are
+      excluded never appear in `"$defs"`
+    * `:except` - A blacklist of top-level field names. Applied after `:only`
 
   """
-  @spec transmute(atom(), [{:format, atom()} | {:refs, boolean()}]) :: map() | String.t()
+  @spec transmute(atom(), keyword()) :: map() | String.t()
   def transmute(source, opts \\ []) when is_atom(source) do
     format = Keyword.get(opts, :format)
     refs = Keyword.get(opts, :refs, false)
 
-    schema = JSONSchema.generate(source, root: true)
+    schema =
+      source
+      |> JSONSchema.generate(root: true)
+      |> Filter.apply(Keyword.get(opts, :only), Keyword.get(opts, :except))
+
     schema = if refs, do: Refs.extract(schema), else: schema
 
     if format == :json do

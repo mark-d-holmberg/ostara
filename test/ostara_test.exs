@@ -102,6 +102,36 @@ defmodule OstaraTest do
     end
   end
 
+  describe "transmute/2 with :only / :except" do
+    test ":only keeps just the whitelisted properties and required entries" do
+      schema = Ostara.transmute(Product, only: [:product_name, :price])
+      assert Enum.sort(Map.keys(schema["properties"])) == ["price", "product_name"]
+      assert Enum.all?(schema["required"] || [], &(&1 in ["price", "product_name"]))
+    end
+
+    test ":only accepts strings" do
+      schema = Ostara.transmute(Product, only: ["product_name"])
+      assert Map.keys(schema["properties"]) == ["product_name"]
+    end
+
+    test "excluded embeds do not appear in $defs" do
+      schema = Ostara.transmute(Product, only: [:product_name, :dimensions], refs: true)
+      assert Map.keys(schema["$defs"]) == ["Dimensions"]
+    end
+
+    test ":except removes properties" do
+      schema = Ostara.transmute(Product, except: [:dimensions, :reviews], refs: true)
+      refute Map.has_key?(schema["properties"], "dimensions")
+      refute Map.has_key?(schema, "$defs")
+    end
+
+    test ":only raises on unknown fields" do
+      assert_raise ArgumentError, ~r/unknown fields/, fn ->
+        Ostara.transmute(Product, only: [:nope])
+      end
+    end
+  end
+
   describe "transmute/1 with Veilgen resources" do
     test "it works with a sheet" do
       assert %{
