@@ -3,8 +3,6 @@ defmodule Ostara.JSONSchema do
   Functions for transforming an `Ecto.Schema` module into a JSON Schema.
   """
 
-  require Logger
-
   alias Ostara.Properties
   alias Ostara.Validation
 

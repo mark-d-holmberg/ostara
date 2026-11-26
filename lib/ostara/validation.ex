@@ -12,7 +12,6 @@ defmodule Ostara.Validation do
   """
 
   alias Ostara.JSONSchema
-  require Logger
 
   @doc """
   Annotates the `"properties"` in `map` based on the runtime `changeset/2`
