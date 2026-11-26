@@ -81,8 +81,8 @@ defmodule Ostara.Schemas.Sheet do
 
   @spec new(map()) :: t()
   def new(params) when is_map(params) do
-    params
-    |> changeset(%__MODULE__{})
+    %__MODULE__{}
+    |> changeset(params)
     |> apply_action!(:insert)
   end
 
